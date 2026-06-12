@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Fog of War Explorer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --gold: #f0c040;
+    --gold-dim: #a07820;
+    --ui-bg: rgba(8, 12, 25, 0.88);
+    --red: #e53935;
+    --green: #4caf50;
+  }
+  html, body { height: 100%; width: 100%; overflow: hidden; background: #0a0f1e; font-family: 'Georgia', serif; }
+  #map { position: absolute; inset: 0; z-index: 1; }
+  #fog-canvas { position: absolute; inset: 0; z-index: 400; pointer-events: none; }
+
+  /* HUD top */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 500;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px 6px;
+    background: linear-gradient(to bottom, var(--ui-bg) 60%, transparent);
+  }
+  #hud-title { font-size: 14px; letter-spacing: 3px; color: var(--gold); text-transform: uppercase; text-shadow: 0 0 12px var(--gold-dim); }
+  #stats { display: flex; gap: 14px; }
+  .stat { text-align: center; }
+  .stat-val { font-size: 16px; font-weight: bold; color: var(--gold); text-shadow: 0 0 8px var(--gold-dim); }
+  .stat-lbl { font-size: 8px; letter-spacing: 2px; color: #8a7a50; text-transform: uppercase; }
+
+  /* Status bar */
+  #status-bar {
+    position: absolute; top: 52px; left: 14px; z-index: 500;
+    font-size: 9px; letter-spacing: 1.5px; color: #8a7a50; text-transform: uppercase;
+  }
+  #status-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: #555; margin-right: 5px; vertical-align: middle; transition: background 0.3s;
+  }
+  #status-dot.active  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  #status-dot.searching { background: var(--gold); box-shadow: 0 0 6px var(--gold); animation: blink 1s infinite; }
+  #status-dot.error   { background: var(--red); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Route recording indicator */
+  #route-indicator {
+    position: absolute; top: 52px; right: 14px; z-index: 500;
+    display: none; align-items: center; gap: 5px;
+    font-size: 9px; letter-spacing: 1.5px; color: #ff6b6b; text-transform: uppercase;
+  }
+  #route-indicator.visible { display: flex; }
+  #rec-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #ff6b6b; box-shadow: 0 0 8px #ff6b6b;
+    animation: blink 1s infinite;
+  }
+
+  /* Bottom controls */
+  #controls {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 500;
+    padding: 10px 12px 14px;
+    background: linear-gradient(to top, var(--ui-bg) 60%, transparent);
+    display: flex; gap: 8px; align-items: flex-end;
+  }
+  .btn {
+    flex: 1; padding: 11px 6px;
+    border: 1px solid var(--gold-dim);
+    background: rgba(20, 16, 8, 0.85);
+    color: var(--gold); font-size: 10px; letter-spacing: 1.5px;
+    text-transform: uppercase; cursor: pointer; border-radius: 3px;
+    transition: all 0.2s; font-family: 'Georgia', serif; text-align: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active { background: rgba(240,192,64,0.2); border-color: var(--gold); }
+  .btn.active { background: rgba(240,192,64,0.15); border-color: var(--gold); box-shadow: 0 0 10px rgba(240,192,64,0.3); }
+  .btn.rec { border-color: #ff6b6b; color: #ff6b6b; }
+  .btn.rec.active { background: rgba(255,107,107,0.15); box-shadow: 0 0 10px rgba(255,107,107,0.4); }
+  #btn-route { flex: 1.6; }
+
+  /* Radius selector */
+  #radius-wrap {
+    position: absolute; bottom: 76px; right: 12px; z-index: 500;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    background: var(--ui-bg); border: 1px solid var(--gold-dim); border-radius: 4px; padding: 7px 5px;
+  }
+  #radius-wrap label { font-size: 8px; letter-spacing: 2px; color: #8a7a50; text-transform: uppercase; }
+  #radius-val { font-size: 12px; color: var(--gold); font-weight: bold; }
+  #radius-slider { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 70px; cursor: pointer; accent-color: var(--gold); }
+
+  /* Toast */
+  #toast {
+    position: absolute; top: 68px; left: 50%; transform: translateX(-50%); z-index: 600;
+    background: rgba(8,12,25,0.92); border: 1px solid var(--gold-dim); color: var(--gold);
+    padding: 7px 16px; font-size: 10px; letter-spacing: 2px; border-radius: 3px;
+    opacity: 0; transition: opacity 0.4s; white-space: nowrap; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+
+  /* Settings menu */
+  #settings-btn {
+    position: absolute; top: 70px; left: 14px; z-index: 500;
+    width: 34px; height: 34px; border: 1px solid var(--gold-dim); border-radius: 50%;
+    background: var(--ui-bg); color: var(--gold); font-size: 16px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #settings-panel {
+    position: absolute; top: 112px; left: 14px; z-index: 500;
+    background: rgba(8,12,25,0.97); border: 1px solid var(--gold-dim); border-radius: 5px;
+    padding: 14px; min-width: 200px; display: none;
+  }
+  #settings-panel.open { display: block; }
+  .setting-title { font-size: 9px; letter-spacing: 2px; color: #8a7a50; text-transform: uppercase; margin-bottom: 10px; }
+  .setting-row {
+    padding: 10px 0; border-bottom: 1px solid rgba(160,120,32,0.2);
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    color: var(--gold); font-size: 11px; letter-spacing: 1px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-row:active { opacity: 0.7; }
+  .setting-icon { font-size: 15px; width: 20px; text-align: center; }
+  .setting-row.danger { color: #ff6b6b; }
+
+  /* My location marker */
+  .my-pin-outer {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2.5px solid var(--gold);
+    background: rgba(240,192,64,0.25);
+    box-shadow: 0 0 0 0 rgba(240,192,64,0.5);
+    animation: pin-pulse 2s infinite;
+    position: relative;
+  }
+  .my-pin-inner {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--gold);
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    box-shadow: 0 0 6px var(--gold);
+  }
+  @keyframes pin-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(240,192,64,0.5); }
+    70%  { box-shadow: 0 0 0 10px rgba(240,192,64,0); }
+    100% { box-shadow: 0 0 0 0 rgba(240,192,64,0); }
+  }
+
+  /* Leaflet */
+  .leaflet-container { background: #0a0f1e; }
+  .leaflet-control-zoom { display: none; }
+  .leaflet-attribution-flag { display: none !important; }
+  .leaflet-control-attribution { font-size: 8px !important; opacity: 0.3 !important; background: transparent !important; color: #555 !important; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<canvas id="fog-canvas"></canvas>
+
+<div id="hud">
+  <div id="hud-title">☽ Explorer</div>
+  <div id="stats">
+    <div class="stat"><div class="stat-val" id="stat-cells">0</div><div class="stat-lbl">Ćelija</div></div>
+    <div class="stat"><div class="stat-val" id="stat-km">0.0</div><div class="stat-lbl">km rute</div></div>
+  </div>
+</div>
+
+<div id="status-bar">
+  <span id="status-dot"></span><span id="status-text">Inicijalizacija...</span>
+</div>
+
+<div id="route-indicator">
+  <div id="rec-dot"></div>
+  <span id="rec-label">REC</span>
+</div>
+
+<div id="settings-btn" onclick="toggleSettings()">⚙</div>
+<div id="settings-panel">
+  <div class="setting-title">Podešavanja</div>
+  <div class="setting-row" onclick="exportData()">
+    <span class="setting-icon">📤</span> Izvezi podatke
+  </div>
+  <div class="setting-row" onclick="importData()">
+    <span class="setting-icon">📥</span> Uvezi podatke
+  </div>
+  <div class="setting-row danger" onclick="confirmReset()">
+    <span class="setting-icon">↺</span> Resetuj mapu
+  </div>
+</div>
+
+<div id="radius-wrap">
+  <label>Vidik</label>
+  <div id="radius-val">80m</div>
+  <input type="range" id="radius-slider" min="10" max="500" value="80" step="5">
+</div>
+
+<div id="controls">
+  <button class="btn" id="btn-center" onclick="centerOnMe()">⊙ Ja</button>
+  <button class="btn rec" id="btn-route" onclick="toggleRoute()">◉ Snimi rutu</button>
+  <button class="btn active" id="btn-track" onclick="toggleTracking()">▣ Prati</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════
+const TILE_URL     = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const FOG_COLOR    = 'rgba(8, 12, 28, 0.93)';
+const STORAGE_KEY  = 'fow_cells_v3';
+const ROUTE_KEY    = 'fow_routes_v1';
+const DEF_RADIUS   = 80;
+
+// Battery optimization: min distance (m) before we process new position
+const MIN_MOVE_METERS = 8;
+// Min time between fog redraws during map drag (ms)
+const DRAW_THROTTLE_MS = 120;
+// GPS update interval - higher = less battery (ms)
+const GPS_MAX_AGE = 8000;
+
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+let map, fogCanvas, ctx;
+let locationMarker = null;
+let trackingEnabled = true;
+let watchId = null;
+let currentPos = null;
+let revealRadius = DEF_RADIUS;
+let revealedCells = new Set();   // persistent
+let lastSavedPos = null;         // for MIN_MOVE filter
+let drawPending = false;         // throttle flag
+
+// Route recording
+let routeRecording = false;
+let routePoints = [];            // [{lat,lng,t}] current session
+let routePolyline = null;        // Leaflet polyline
+let allRoutes = [];              // saved sessions
+
+// ════════════════════════════════════════════════════════════
+// PERSISTENCE
+// ════════════════════════════════════════════════════════════
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) revealedCells = new Set(JSON.parse(raw));
+  } catch(e) { revealedCells = new Set(); }
+  try {
+    const r = localStorage.getItem(ROUTE_KEY);
+    if (r) allRoutes = JSON.parse(r);
+  } catch(e) { allRoutes = []; }
+}
+
+// Debounced save — don't hammer localStorage on every tick
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...revealedCells])); } catch(e) {}
+  }, 2000);
+}
+
+function saveRoutes() {
+  try { localStorage.setItem(ROUTE_KEY, JSON.stringify(allRoutes)); } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════
+// MAP INIT
+// ════════════════════════════════════════════════════════════
+loadSaved();
+
+map = L.map('map', {
+  zoomControl: false, attributionControl: true,
+  tap: true, maxZoom: 18, minZoom: 3,
+  preferCanvas: true  // better perf for many markers
+}).setView([44.8176, 20.4569], 15);
+
+L.tileLayer(TILE_URL, {
+  attribution: '© CartoDB', subdomains: 'abcd', maxZoom: 19,
+  keepBuffer: 1,          // less tile pre-loading → less memory
+  updateWhenIdle: true,   // don't fetch tiles mid-pan
+}).addTo(map);
+
+// ════════════════════════════════════════════════════════════
+// FOG CANVAS
+// ════════════════════════════════════════════════════════════
+fogCanvas = document.getElementById('fog-canvas');
+ctx = fogCanvas.getContext('2d', { alpha: true });
+
+function resizeFog() {
+  fogCanvas.width  = window.innerWidth;
+  fogCanvas.height = window.innerHeight;
+  drawFog();
+}
+
+window.addEventListener('resize', resizeFog);
+
+// Throttled redraw during map moves
+map.on('move zoom', () => {
+  if (drawPending) return;
+  drawPending = true;
+  setTimeout(() => { drawFog(); drawPending = false; }, DRAW_THROTTLE_MS);
+});
+map.on('moveend zoomend', () => { drawPending = false; drawFog(); });
+
+function metersToPixels(meters, lat) {
+  const z = map.getZoom();
+  const mpp = (156543.03392 * Math.cos(lat * Math.PI / 180)) / Math.pow(2, z);
+  return meters / mpp;
+}
+
+function drawFog() {
+  const w = fogCanvas.width, h = fogCanvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = FOG_COLOR;
+  ctx.fillRect(0, 0, w, h);
+
+  if (revealedCells.size === 0) { updateStats(); return; }
+
+  ctx.globalCompositeOperation = 'destination-out';
+
+  // Viewport bounds for culling off-screen circles (big perf win)
+  const bounds = map.getBounds();
+  const pad = 0.01;
+  const minLat = bounds.getSouth() - pad, maxLat = bounds.getNorth() + pad;
+  const minLng = bounds.getWest()  - pad, maxLng = bounds.getEast()  + pad;
+
+  for (const key of revealedCells) {
+    const ci = key.indexOf(','), ri = key.lastIndexOf(',');
+    const lat = parseFloat(key.substring(0, ci));
+    const lng = parseFloat(key.substring(ci+1, ri));
+    const rad = parseInt(key.substring(ri+1));
+
+    // Cull if outside viewport
+    if (lat < minLat || lat > maxLat || lng < minLng || lng > maxLng) continue;
+
+    const pt    = map.latLngToContainerPoint(L.latLng(lat, lng));
+    const radPx = metersToPixels(rad, lat);
+
+    const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, radPx);
+    g.addColorStop(0,    'rgba(0,0,0,1)');
+    g.addColorStop(0.6,  'rgba(0,0,0,0.97)');
+    g.addColorStop(0.85, 'rgba(0,0,0,0.55)');
+    g.addColorStop(1,    'rgba(0,0,0,0)');
+
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radPx, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  updateStats();
+}
+
+// ════════════════════════════════════════════════════════════
+// CELL KEY  (grid snap)
+// ════════════════════════════════════════════════════════════
+// Grid cell = ~8.9m lat, ~6.3m lng at Belgrade latitude
+const GRID = 0.00008;
+
+function cellKey(lat, lng, rad) {
+  const la = (Math.round(lat / GRID) * GRID).toFixed(5);
+  const lo = (Math.round(lng / GRID) * GRID).toFixed(5);
+  return `${la},${lo},${rad}`;
+}
+
+function revealArea(lat, lng) {
+  const key = cellKey(lat, lng, revealRadius);
+  if (!revealedCells.has(key)) {
+    revealedCells.add(key);
+    scheduleSave();
+    return true;
+  }
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════
+// DISTANCE FILTER (battery saver)
+// ════════════════════════════════════════════════════════════
+function haversineM(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ════════════════════════════════════════════════════════════
+// LOCATION MARKER
+// ════════════════════════════════════════════════════════════
+function upsertLocationMarker(lat, lng) {
+  const html = '<div class="my-pin-outer"><div class="my-pin-inner"></div></div>';
+  if (!locationMarker) {
+    locationMarker = L.marker([lat, lng], {
+      icon: L.divIcon({ html, className: '', iconSize: [20,20], iconAnchor: [10,10] }),
+      zIndexOffset: 1000
+    }).addTo(map);
+  } else {
+    locationMarker.setLatLng([lat, lng]);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// GPS CALLBACKS
+// ════════════════════════════════════════════════════════════
+function setStatus(state, text) {
+  const dot = document.getElementById('status-dot');
+  dot.className = state;
+  document.getElementById('status-text').textContent = text;
+}
+
+function onPosition(pos) {
+  const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+
+  // Battery saver: skip if barely moved
+  if (lastSavedPos) {
+    const dist = haversineM(lastSavedPos.lat, lastSavedPos.lng, lat, lng);
+    if (dist < MIN_MOVE_METERS) return;
+  }
+  lastSavedPos = { lat, lng };
+  currentPos   = { lat, lng };
+
+  setStatus('active', `GPS ±${Math.round(accuracy)}m`);
+  upsertLocationMarker(lat, lng);
+
+  const isNew = revealArea(lat, lng);
+
+  // Route recording
+  if (routeRecording) {
+    routePoints.push({ lat, lng, t: Date.now() });
+    updateRoutePolyline();
+    updateRecLabel();
+  }
+
+  if (isNew) drawFog();
+
+  if (trackingEnabled) {
+    map.setView([lat, lng], map.getZoom(), { animate: false });
+  }
+}
+
+function onError(err) {
+  const msgs = ['', 'Pristup odbijen', 'GPS nedostupan', 'GPS timeout'];
+  setStatus('error', msgs[err.code] || 'GPS greška');
+}
+
+function startGPS() {
+  setStatus('searching', 'Tražim GPS...');
+  if (!('geolocation' in navigator)) { setStatus('error', 'GPS nije podržan'); return; }
+  watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    maximumAge: GPS_MAX_AGE,
+    timeout: 20000
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// ROUTE RECORDING
+// ════════════════════════════════════════════════════════════
+function toggleRoute() {
+  const btn = document.getElementById('btn-route');
+  const ind = document.getElementById('route-indicator');
+
+  if (!routeRecording) {
+    // Start
+    routeRecording = true;
+    routePoints    = [];
+    btn.textContent = '■ Zaustavi';
+    btn.classList.add('active');
+    ind.classList.add('visible');
+    toast('Snimanje rute počelo');
+  } else {
+    // Stop & save
+    routeRecording = false;
+    btn.textContent = '◉ Snimi rutu';
+    btn.classList.remove('active');
+    ind.classList.remove('visible');
+
+    if (routePoints.length >= 2) {
+      const distKm = routeDistanceKm(routePoints);
+      allRoutes.push({ points: routePoints, date: new Date().toLocaleDateString('sr'), km: distKm.toFixed(2) });
+      saveRoutes();
+      toast(`Ruta sačuvana · ${distKm.toFixed(2)} km`);
+    } else {
+      toast('Ruta prekratka, nije sačuvana');
+    }
+    // Keep polyline visible (dimmed)
+    if (routePolyline) {
+      routePolyline.setStyle({ color: '#a07820', opacity: 0.5 });
+    }
+    routePolyline = null;
+  }
+}
+
+function updateRoutePolyline() {
+  const latlngs = routePoints.map(p => [p.lat, p.lng]);
+  if (!routePolyline) {
+    routePolyline = L.polyline(latlngs, {
+      color: '#ff6b6b', weight: 3, opacity: 0.85,
+      smoothFactor: 1
+    }).addTo(map);
+  } else {
+    routePolyline.setLatLngs(latlngs);
+  }
+}
+
+function updateRecLabel() {
+  const km = routeDistanceKm(routePoints);
+  document.getElementById('rec-label').textContent = `REC ${km.toFixed(2)}km`;
+}
+
+function routeDistanceKm(pts) {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++)
+    d += haversineM(pts[i-1].lat, pts[i-1].lng, pts[i].lat, pts[i].lng);
+  return d / 1000;
+}
+
+// Draw saved routes on load
+function drawSavedRoutes() {
+  for (const route of allRoutes) {
+    const latlngs = route.points.map(p => [p.lat, p.lng]);
+    L.polyline(latlngs, { color: '#a07820', weight: 2, opacity: 0.4 }).addTo(map);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// STATS
+// ════════════════════════════════════════════════════════════
+function updateStats() {
+  document.getElementById('stat-cells').textContent = revealedCells.size;
+  // total km from all saved routes + current
+  let km = allRoutes.reduce((s, r) => s + parseFloat(r.km || 0), 0);
+  if (routeRecording && routePoints.length > 1) km += routeDistanceKm(routePoints);
+  document.getElementById('stat-km').textContent = km.toFixed(1);
+}
+
+// ════════════════════════════════════════════════════════════
+// CONTROLS
+// ════════════════════════════════════════════════════════════
+function centerOnMe() {
+  if (currentPos) {
+    map.setView([currentPos.lat, currentPos.lng], 17, { animate: true });
+    toast('Centrirano');
+  } else {
+    toast('Lokacija nije dostupna');
+  }
+}
+
+function toggleTracking() {
+  trackingEnabled = !trackingEnabled;
+  const btn = document.getElementById('btn-track');
+  btn.textContent  = trackingEnabled ? '▣ Prati' : '□ Prati';
+  btn.classList.toggle('active', trackingEnabled);
+  toast(trackingEnabled ? 'Praćenje uključeno' : 'Praćenje isključeno');
+}
+
+// ════════════════════════════════════════════════════════════
+// SETTINGS PANEL
+// ════════════════════════════════════════════════════════════
+let settingsOpen = false;
+function toggleSettings() {
+  settingsOpen = !settingsOpen;
+  document.getElementById('settings-panel').classList.toggle('open', settingsOpen);
+}
+// Close on map tap
+map.on('click', () => { settingsOpen = false; document.getElementById('settings-panel').classList.remove('open'); });
+
+function confirmReset() {
+  toggleSettings();
+  if (confirm('Obrisati SVO otkriveno područje i sve rute?\n\nOva akcija se ne može poništiti!')) {
+    revealedCells.clear();
+    allRoutes = [];
+    routePoints = [];
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ROUTE_KEY);
+    // Remove polylines from map
+    map.eachLayer(l => { if (l instanceof L.Polyline) map.removeLayer(l); });
+    drawFog();
+    toast('Mapa resetovana');
+  }
+}
+
+function exportData() {
+  toggleSettings();
+  const data = {
+    cells:  [...revealedCells],
+    routes: allRoutes,
+    exported: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `fog-explorer-${Date.now()}.json`; a.click();
+  URL.revokeObjectURL(url);
+  toast('Podaci izvezeni');
+}
+
+function importData() {
+  toggleSettings();
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.cells)  { data.cells.forEach(c => revealedCells.add(c)); scheduleSave(); }
+        if (data.routes) { allRoutes = allRoutes.concat(data.routes); saveRoutes(); }
+        drawSavedRoutes();
+        drawFog();
+        toast('Podaci uvezeni!');
+      } catch(err) { toast('Greška pri uvozu fajla'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+// Radius slider
+document.getElementById('radius-slider').addEventListener('input', function() {
+  revealRadius = parseInt(this.value);
+  document.getElementById('radius-val').textContent = revealRadius + 'm';
+});
+
+// ════════════════════════════════════════════════════════════
+// MANUAL TAP TO REVEAL (tap on map)
+// ════════════════════════════════════════════════════════════
+map.on('click', function(e) {
+  if (settingsOpen) return;
+  revealArea(e.latlng.lat, e.latlng.lng);
+  drawFog();
+});
+
+// ════════════════════════════════════════════════════════════
+// Page visibility API — pause GPS when tab hidden
+// ════════════════════════════════════════════════════════════
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  } else {
+    if (watchId === null) startGPS();
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+resizeFog();
+drawSavedRoutes();
+startGPS();
+toast('Krećite se da otkrijete mapu!');
+</script>
+</body>
+</html>
