@@ -1,0 +1,27 @@
+{
+  "name": "Fog of War Explorer",
+  "short_name": "FogExplorer",
+  "description": "Otkrivaj grad korak po korak kroz maglu",
+  "start_url": "/FogOfWar/",
+  "scope": "/FogOfWar/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0f1e",
+  "theme_color": "#0a0f1e",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Berxzy/FogOfWar/main/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/Berxzy/FogOfWar/main/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["navigation", "utilities"],
+  "lang": "sr"
+}
